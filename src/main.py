@@ -34,6 +34,13 @@ class Master(object):
         self.num_reducers = num_reducers
 
     def start(self):
+        self.first_phase()
+        comm.Barrier()
+
+        self.second_phase()
+        comm.Barrier()
+
+    def first_phase(self):
         self.files = [(os.path.join(self.input_path, path), doc_id)
             for doc_id, path in enumerate(os.listdir(self.input_path))
         ]
@@ -42,43 +49,39 @@ class Master(object):
         # assign it a file to scan
 
         while self.files:
-            comm.recv(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
+            msg = comm.recv(source=MPI.ANY_SOURCE, status=status)
 
-            if status.Get_tag() == STATUS_AVAILABLE:
+            if msg == MSG_STATUS_AVAILABLE:
                 comm.send(self.files.pop(), dest=status.Get_source())
 
-        for i in xrange(self.num_mappers + 1):
-            comm.send(None, tag=COMMAND_QUIT,
-                      dest=self.num_reducers + i + 1)
-
-        comm.Barrier()
-        self.second_phase()
+        for i in xrange(self.num_mappers):
+            log.info("Sending termination message to %d" % \
+                     (self.num_reducers + i + SNODES))
+            comm.send(MSG_COMMAND_QUIT, dest=self.num_reducers + i + SNODES)
 
     def refresh_input_list(self, file_set, assigned_set):
         for path in os.listdir(self.input_path):
-            fullpath = os.path.join(self.input_path, path)
-            if path.startswith("input-") and fullpath not in assigned:
-                file_set.add(fullpath)
+            if path.startswith("input-") and path not in assigned:
+                file_set.add(path)
+
+        return file_set
 
     def second_phase(self):
-        data = comm.recv(source=NODE_COMBINER, tag=COMMAND_START_PHASE2)
+        data = comm.recv(source=NODE_COMBINER)
 
         no_more_inputs = False
         assigned = set()
-        files = set([os.path.join(self.input_path, path)
-            for path in os.listdir(self.input_path)
-                if path.startswith("input-")
-        ])
+        files = set()
 
         while True:
-            comm.recv(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
+            msg = comm.recv(source=MPI.ANY_SOURCE, status=status)
 
             if not no_more_inputs and not files:
                 # Refresh our input list in the case the combiner created new
                 # inputs
 
                 while True:
-                    self.refresh_input_list(files, assigned, True)
+                    files = self.refresh_input_list(files, assigned)
 
                     if not files:
                         log.info("Sleeping 4 seconds for new files to show up")
@@ -88,15 +91,16 @@ class Master(object):
 
             # Here we go with a pythonic switch case made of cascaded ifs
 
-            if status.Get_tag() == COMMAND_END_PHASE1:
+            if status.Get_source() == NODE_COMBINER and msg == MSG_COMMAND_QUIT:
                 self.refresh_input_list(files, assigned)
                 no_more_inputs = True
 
-            elif status.Get_tag() == STATUS_AVAILABLE:
+            elif msg == MSG_STATUS_AVAILABLE:
                 if files:
-                    comm.send(files.pop(), dest=status.Get_source())
+                    comm.send(os.path.join(self.input_path, files.pop()),
+                              dest=status.Get_source())
                 else:
-                    comm.send(None, dest=status.Get_source(), tag=COMMAND_QUIT)
+                    comm.send(MSG_COMMAND_QUIT, dest=status.Get_source())
 
 def initialize_indexer(input_path, output_path, num_mappers, num_reducers):
     if size != 2 + num_mappers + num_reducers:

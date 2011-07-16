@@ -98,8 +98,7 @@ class Combiner(object):
         self.finish_partition(handle)
 
         log.info("Finished combininig the results of the first phase")
-
-        MPI.COMM_WORLD.send(None, dest=NODE_MASTER, tag=COMMAND_END_PHASE1)
+        comm.send(MSG_COMMAND_QUIT, dest=NODE_MASTER)
 
     def finish_partition(self, handle):
         if handle is not None:
@@ -123,7 +122,9 @@ class Combiner(object):
 
             if not self.is_master_warned:
                 log.info("Telling the master to start the second phase")
-                MPI.COMM_WORLD.send(None, dest=0, tag=COMMAND_PHASE2)
+
+                # It can be whatever since we are not going to check an
+                comm.send(0, dest=NODE_COMBINER)
                 self.is_master_warned = True
 
         return handle

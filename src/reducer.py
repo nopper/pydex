@@ -3,6 +3,7 @@
 from mpi4py import MPI
 from heapq import heappush, heappop
 from tempfile import NamedTemporaryFile
+from collections import OrderedDict
 
 from struct import calcsize, pack
 from tags import *
@@ -13,6 +14,9 @@ log = get_logger('reducer')
 rank = MPI.COMM_WORLD.Get_rank()
 name = MPI.Get_processor_name()
 
+status = MPI.Status()
+comm = MPI.COMM_WORLD
+
 class Reducer(object):
     def __init__(self, output_path, num_mappers):
         log.info("Started a new reducer on %s (rank=%d)" % (name, rank))
@@ -20,19 +24,96 @@ class Reducer(object):
         self.output_path = output_path
         self.num_workers = num_mappers
 
-        status = MPI.Status()
-        comm = MPI.COMM_WORLD
+        self.reduce_word_count()
+        comm.Barrier()
 
+        self.reduce_word_count_per_doc()
+        comm.Barrier()
+
+    def reduce_word_count_per_doc(self):
+        remaining = self.num_workers
+
+        # We need to create word, doc-id <-> wordCount, wordPerDoc
+        # At this point we are going to create an heap to keep order of the words.
+        # A dictionary on the other hand will keep track of
+        # dict[doc_id] = (word_count, {word1:cnt, word2:cnt ..})
+
+        num_docs = 0
+        num_words = 0
+        words_length = 0
+
+        word_heap = []
+        doc_dict = {}
+
+        while remaining > 0:
+            msg = comm.recv(source=MPI.ANY_SOURCE, status=status)
+
+            if msg == MSG_COMMAND_QUIT:
+                remaining -= 1
+            else:
+                try:
+                    doc_id, word, word_count = msg
+                except Exception, exc:
+                    print "MSG FROM", status.Get_source(), status.Get_tag()
+                    print msg
+                    raise exc
+
+                if not word in word_heap:
+                    heappush(word_heap, word)
+                    num_words += 1
+                    words_length += len(word)
+
+                if not doc_id in doc_dict:
+                    doc_dict[doc_id] = (0, defaultdict(int))
+                    num_docs += 1
+
+                doc_tuple = doc_dict[doc_id]
+                doc_tuple[0] += word_count
+                doc_tuple[1][word] += word_count
+
+            # This is somehow dummy
+            if words_length > threshold or remaining == 0:
+                self.write_word_count_per_doc(word_heap, doc_dict)
+
+                doc_dict = {} # Or maybe clear?
+                num_docs = 0
+                num_words = 0
+                words_length = 0
+
+    def write_word_count_per_doc(self, word_heap, doc_dict):
+        handle = NamedTemporaryFile(prefix='reduce-2-chunk-',
+                                    dir=self.output_path, delete=False)
+
+        doc_ids = sorted(doc_dict.keys())
+
+        while not word_heap:
+            word = heappop(word_heap)
+
+            for doc_id in doc_ids:
+                dct = doc_dict[doc_id]
+                doc_word_count = dct[0]
+                word_count     = dct[1][word]
+
+                handle.write("%s %d %d %d\n" % \
+                    (word, doc_id, word_count, doc_word_count)
+                )
+
+    def reduce_word_count(self):
         heap = []
         length = 0
         threshold = 1024 * 1024 # 1 MByte
-        remaining = num_mappers
+        remaining = self.num_workers
+
+        msgs = 0
 
         while remaining > 0:
-            msg = comm.recv(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
+            msg = comm.recv(source=MPI.ANY_SOURCE, status=status)
+            msgs += 1
 
-            if status.Get_tag() == COMMAND_QUIT:
+            if msg == MSG_COMMAND_QUIT:
                 remaining -= 1
+                log.info("Received termination message from %d" % \
+                        status.Get_source())
             else:
                 word, doc_id = msg
 
@@ -44,9 +125,7 @@ class Reducer(object):
                 heap = []
                 length = 0
 
-        comm.Barrier()
-
-        log.info("Ready for the second phase")
+        print "I HAD", msgs
 
     def write_partition(self, heap):
         if not heap:
