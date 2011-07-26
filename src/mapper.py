@@ -32,6 +32,8 @@ class Mapper(object):
         log.info("Second phase concluded (rank=%d)" % rank)
         comm.Barrier()
 
+        log.info("Starting third phase (rank=%d)" % rank)
+
     def execute_on_request(self, callback):
         self.tasks = 0
         exit = False

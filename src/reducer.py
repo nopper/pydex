@@ -104,11 +104,8 @@ class Reducer(object):
         threshold = 1024 * 1024 # 1 MByte
         remaining = self.num_workers
 
-        msgs = 0
-
         while remaining > 0:
             msg = comm.recv(source=MPI.ANY_SOURCE, status=status)
-            msgs += 1
 
             if msg == MSG_COMMAND_QUIT:
                 remaining -= 1
@@ -124,8 +121,6 @@ class Reducer(object):
                 self.write_partition(heap)
                 heap = []
                 length = 0
-
-        print "I HAD", msgs
 
     def write_partition(self, heap):
         if not heap:
