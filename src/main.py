@@ -23,13 +23,14 @@ comm = MPI.COMM_WORLD
 SNODES = 2
 
 class Master(object):
-    def __init__(self, input_path, num_mappers, num_reducers):
+    def __init__(self, input_path, output_path, num_mappers, num_reducers):
         log.info("Master is located at rank=%d" % rank)
         log.info("Starting the reverse index construction on '%s' with %d" \
                  " mappers and %d reducers." %                             \
                  (input_path, num_mappers, num_reducers))
 
         self.input_path = input_path
+        self.output_path = output_path
         self.num_mappers = num_mappers
         self.num_reducers = num_reducers
 
@@ -41,9 +42,18 @@ class Master(object):
         comm.Barrier()
 
     def first_phase(self):
-        self.files = [(os.path.join(self.input_path, path), doc_id)
-            for doc_id, path in enumerate(os.listdir(self.input_path))
-        ]
+        docid = 1
+        self.files = []
+
+        for path in sorted(os.listdir(self.input_path)):
+            path = os.path.join(self.input_path, path)
+
+            if os.stat(path).st_size == 0:
+                continue
+
+            self.files.append((path, docid))
+            docid += 1
+
 
         # This is a merely farm. Each worker connects to this server and we
         # assign it a file to scan
@@ -60,14 +70,16 @@ class Master(object):
             comm.send(MSG_COMMAND_QUIT, dest=self.num_reducers + i + SNODES)
 
     def refresh_input_list(self, file_set, assigned_set):
-        for path in os.listdir(self.input_path):
-            if path.startswith("input-") and path not in assigned:
+        for path in os.listdir(self.output_path):
+            if path.startswith("input-") and path not in assigned_set:
                 file_set.add(path)
 
         return file_set
 
     def second_phase(self):
+        log.info("Waiting for message from the combiner. About to start")
         data = comm.recv(source=NODE_COMBINER)
+        log.info("Received. Entering the second phase loop")
 
         no_more_inputs = False
         assigned = set()
@@ -95,11 +107,16 @@ class Master(object):
                 self.refresh_input_list(files, assigned)
                 no_more_inputs = True
 
+                log.info("Combiner has finished the first phase. No more "
+                         "inputs are available (%d left)" % len(files))
+
             elif msg == MSG_STATUS_AVAILABLE:
                 if files:
-                    comm.send(os.path.join(self.input_path, files.pop()),
+                    comm.send(os.path.join(self.output_path, files.pop()),
                               dest=status.Get_source())
                 else:
+                    log.info("Sending termination messages for the second "
+                             "phase to mapper")
                     comm.send(MSG_COMMAND_QUIT, dest=status.Get_source())
 
 def initialize_indexer(input_path, output_path, num_mappers, num_reducers):
@@ -111,7 +128,7 @@ def initialize_indexer(input_path, output_path, num_mappers, num_reducers):
         output_path = os.path.abspath(output_path)
 
         if rank == 0:
-            master = Master(input_path, num_mappers, num_reducers)
+            master = Master(input_path, output_path, num_mappers, num_reducers)
             master.start()
         elif rank == 1:
             Combiner(num_mappers, output_path)

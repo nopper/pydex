@@ -3,7 +3,7 @@
 from mpi4py import MPI
 from heapq import heappush, heappop
 from tempfile import NamedTemporaryFile
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 from struct import calcsize, pack
 from tags import *
@@ -44,6 +44,7 @@ class Reducer(object):
 
         word_heap = []
         doc_dict = {}
+        threshold = 1024 * 1024 # 1 MByte
 
         while remaining > 0:
             msg = comm.recv(source=MPI.ANY_SOURCE, status=status)
@@ -51,12 +52,7 @@ class Reducer(object):
             if msg == MSG_COMMAND_QUIT:
                 remaining -= 1
             else:
-                try:
-                    doc_id, word, word_count = msg
-                except Exception, exc:
-                    print "MSG FROM", status.Get_source(), status.Get_tag()
-                    print msg
-                    raise exc
+                doc_id, word, word_count = msg
 
                 if not word in word_heap:
                     heappush(word_heap, word)
@@ -64,7 +60,7 @@ class Reducer(object):
                     words_length += len(word)
 
                 if not doc_id in doc_dict:
-                    doc_dict[doc_id] = (0, defaultdict(int))
+                    doc_dict[doc_id] = [0, defaultdict(int)]
                     num_docs += 1
 
                 doc_tuple = doc_dict[doc_id]
@@ -86,7 +82,7 @@ class Reducer(object):
 
         doc_ids = sorted(doc_dict.keys())
 
-        while not word_heap:
+        while word_heap:
             word = heappop(word_heap)
 
             for doc_id in doc_ids:
@@ -97,6 +93,8 @@ class Reducer(object):
                 handle.write("%s %d %d %d\n" % \
                     (word, doc_id, word_count, doc_word_count)
                 )
+
+        handle.close()
 
     def reduce_word_count(self):
         heap = []

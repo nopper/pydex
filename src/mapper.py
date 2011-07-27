@@ -72,7 +72,7 @@ class Mapper(object):
                 if not line:
                     return
 
-                word, doc_id, count = line.strip().split(' ', 2)
+                word, doc_id, word_count = line.strip().split(' ', 2)
 
                 dst_reducer = hash(word) % len(reducers)
                 comm.send((int(doc_id), word, int(word_count)),
