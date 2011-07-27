@@ -47,13 +47,17 @@ class Combiner(object):
         log.info("Started a new combiner on %s (rank=%d). Blocked on a barrier" % (name, rank))
         comm.Barrier()
 
+        self.is_master_warned = False
         self.input_path = input_path
         self.last_partition = 0
 
         # Ok here we need to open various inputs
-        inputs = [
-            KeyValueReader(os.path.join(input_path, path)).iterate()
-                for path in os.listdir(input_path)
+        inputs = [os.path.join(input_path, path)
+            for path in os.listdir(input_path)
+        ]
+
+        inputs = [KeyValueReader(path).iterate()
+            for path in inputs if os.stat(path).st_size != 0
         ]
 
         length = 0
@@ -106,6 +110,18 @@ class Combiner(object):
             os.rename(handle.name,
                       os.path.join(self.input_path, 'input%s' % fname[4:]))
 
+            # Now we can already start the new workers to start the second
+            # phase on the previous partition. The idea is to rename the
+            # partition file to input-something. The master should be already
+            # watching the directory for changes.
+
+            if not self.is_master_warned:
+                log.info("Telling the master to start the second phase")
+
+                # It can be whatever since we are not going to check an
+                comm.send(0, dest=NODE_MASTER)
+                self.is_master_warned = True
+
     def new_partition(self, curr_handle=None):
         handle = \
             NamedTemporaryFile(prefix='part-{:06d}-'.format(self.last_partition),
@@ -113,18 +129,6 @@ class Combiner(object):
         self.last_partition += 1
 
         if self.last_partition > 1:
-            # Now we can already start the new workers to start the second
-            # phase on the previous partition. The idea is to rename the
-            # partition file to input-something. The master should be already
-            # watching the directory for changes.
-
             self.finish_partition(curr_handle)
-
-            if not self.is_master_warned:
-                log.info("Telling the master to start the second phase")
-
-                # It can be whatever since we are not going to check an
-                comm.send(0, dest=NODE_COMBINER)
-                self.is_master_warned = True
 
         return handle
