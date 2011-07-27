@@ -17,6 +17,13 @@
 In order to have a proper working copy you need *at least* [Python
 2.7](http://) and [mpi4py](http://) package compiled from the source.
 
+## Requirements on Ubuntu
+
+You need to install the following packages on ubuntu in order to run our
+solution:
+
+$ sudo apt-get install mpich2 libcr-dev g++ python-dev
+
 ## Installing requirements
 
 For the tests we have used MPICHv2, but note that any implementation of
