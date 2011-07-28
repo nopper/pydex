@@ -45,6 +45,14 @@ class Master(object):
         log.info("[2] Finished. Waiting on a Barrier")
         comm.Barrier()
 
+        log.info("[3] Starting")
+        self.third_phase()
+        log.info("[3] Finished. Waiting on a Barrier")
+        comm.Barrier()
+
+    def third_phase(self):
+        self.second_phase()
+
     def first_phase(self):
         docid = 1
         self.files = []

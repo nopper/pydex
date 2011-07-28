@@ -4,6 +4,7 @@ from mpi4py import MPI
 from bisect import insort, bisect
 from heapq import heappush, heappop
 from tempfile import NamedTemporaryFile
+from collections import defaultdict
 
 from struct import calcsize, pack
 from tags import *
@@ -33,6 +34,52 @@ class Reducer(object):
         self.reduce_word_count_per_doc()
         log.info("[2] Finished")
         comm.Barrier()
+
+        log.info("[3] Starting")
+        self.reduce_words_per_doc()
+        log.info("[3] Finished")
+        comm.Barrier()
+
+    def reduce_words_per_doc(self):
+        remaining = self.num_workers
+
+        heap = []
+        words_dct = defaultdict(int)
+        words_length = 0
+        threshold = 1024 * 1024
+
+        while remaining > 0:
+            msg = comm.recv(source=MPI.ANY_SOURCE, status=status)
+
+            if msg == MSG_COMMAND_QUIT:
+                remaining -= 1
+                log.debug("Received termination message from %d" % \
+                        status.Get_source())
+            else:
+                word, doc_id, word_count, word_per_doc = msg
+
+                heappush(heap, msg)
+
+                words_dct[word] += 1
+                words_length += len(word)
+
+                if words_length > threshold or remaining == 0:
+                    self.write_words_per_doc(heap, words_dct)
+                    words_dct = {}
+                    words_length = 0
+
+        self.write_words_per_doc(heap, words_dct)
+
+    def write_words_per_doc(self, heap, words_dct):
+        handle = NamedTemporaryFile(prefix='reduce-3-chunk-',
+                                    dir=self.output_path, delete=False)
+
+        while heap:
+            word, doc_id, word_count, word_per_doc = heappop(heap)
+            handle.write("%s %d %d %d %d\n" % (word, doc_id, word_count,
+                                               word_per_doc, words_dct[word]))
+
+        handle.close()
 
     def reduce_word_count_per_doc(self):
         remaining = self.num_workers

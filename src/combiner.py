@@ -46,6 +46,17 @@ class KeyValueReader(object):
 
         return (doc_id, word, word_count, word_per_doc)
 
+    @staticmethod
+    def third_phase(line):
+        word, doc_id, word_count, word_per_doc, docs_per_word = line.split(' ', 4)
+        doc_id = int(doc_id)
+        word_count = int(word_count)
+        word_per_doc = int(word_per_doc)
+        docs_per_word = int(docs_per_word)
+
+        return (word, doc_id, word_count, word_per_doc, docs_per_word)
+
+
     def iterate(self):
         with open(self.path, 'r') as f:
             with contextlib.closing(mmap.mmap(f.fileno(), 0,
@@ -82,11 +93,108 @@ class Combiner(object):
         # -1 stage while mappers are processing results of the jth phase. The
         # pipeline approach is therefore here.
 
+        self.is_master_warned = False
+        self.last_partition = 0
+
         log.info("[3] Starting third phase")
         self.second_phase()
         log.info("[3] Finished")
 
         comm.Barrier()
+
+        self.is_master_warned = False
+        self.last_partition = 0
+
+        log.info("[4] Starting fourth phase")
+        self.third_phase()
+        log.info("[4] Finished")
+
+    def third_phase(self):
+        inputs = []
+
+        for path in os.listdir(self.input_path):
+            if not path.startswith("reduce-3-"):
+                continue
+
+            path = os.path.join(self.input_path, path)
+
+            inputs.append(KeyValueReader(path,
+                                         KeyValueReader.third_phase).iterate())
+
+        heap = []
+        for id, iter in enumerate(inputs):
+            try:
+                item = iter.next()
+                toadd = (item, id, iter)
+                heap.append(toadd)
+            except StopIteration:
+                pass
+
+        prev_word = None
+        counter = 0
+        num_words = 0
+
+        heapify(heap)
+
+        length = 0
+        threshold = 1024 * 1024
+        sources = set()
+        handle, cnt_handle = self.new_assoc_partition()
+
+        while heap:
+            item, id, iter = heap[0]
+
+            word, docid, word_count, word_per_doc, docs_per_word = item
+            msg = "%s %d %d %d\n" % (word, docid, word_count, word_per_doc)
+
+            if word == prev_word:
+                if id not in sources:
+                    counter += docs_per_word
+                    sources.add(id) # Avoid doble counts
+
+                num_words += 1
+            else:
+                # Flush information collected so far
+                while num_words > 0:
+                    cnt_handle.write("%d\n" % counter)
+                    num_words -= 1
+
+                counter = docs_per_word
+                prev_word = word
+                num_words = 1
+
+                sources.clear()
+                sources.add(id)
+
+            handle.write(msg)
+            length += len(msg)
+
+            try:
+                heapreplace(heap, (iter.next(), id, iter))
+            except StopIteration:
+                heappop(heap)
+
+            if length > threshold:
+                length = 0
+
+                while num_words > 0:
+                    cnt_handle.write("%d\n" % counter)
+                    num_words -= 1
+
+                handle.close()
+                cnt_handle.close()
+
+                handle, cnt_handle = self.new_assoc_partition(handle, cnt_handle)
+
+
+        while num_words > 0:
+            cnt_handle.write("%d\n" % counter)
+            num_words -= 1
+
+        self.finish_assoc_partition(handle, cnt_handle)
+
+        log.info("Finished combininig the results of the third phase")
+        comm.send(MSG_COMMAND_QUIT, dest=NODE_MASTER)
 
     def second_phase(self):
         inputs = []
@@ -165,6 +273,11 @@ class Combiner(object):
             handle.write(msg)
             handle.close()
 
+            self.finish_partition(handle)
+
+        log.info("Finished combininig the results of the second phase")
+        comm.send(MSG_COMMAND_QUIT, dest=NODE_MASTER)
+
     def first_phase(self):
         # Ok here we need to open various inputs
         inputs = [os.path.join(self.input_path, path)
@@ -238,6 +351,15 @@ class Combiner(object):
                 comm.send(0, dest=NODE_MASTER)
                 self.is_master_warned = True
 
+    def finish_assoc_partition(self, handle, cnt_handle):
+        tmp = self.is_master_warned
+        self.is_master_warned = True
+
+        self.finish_partition(handle)
+
+        self.is_master_warned = tmp
+        self.finish_partition(cnt_handle)
+
     def new_partition(self, curr_handle=None):
         handle = \
             NamedTemporaryFile(prefix='part-{:06d}-'.format(self.last_partition),
@@ -248,6 +370,21 @@ class Combiner(object):
             self.finish_partition(curr_handle)
 
         return handle
+
+    def new_assoc_partition(self, curr_handle=None, curr_cnt_handle=None):
+        handle = \
+            NamedTemporaryFile(prefix='part-{:06d}-'.format(self.last_partition),
+                               dir=self.input_path, delete=False)
+        cnt_handle = \
+            NamedTemporaryFile(prefix='part-cnt-{:06d}-'.format(self.last_partition),
+                               dir=self.input_path, delete=False)
+
+        self.last_partition += 1
+
+        if self.last_partition > 1:
+            self.finish_assoc_partition(curr_handle, curr_cnt_handle)
+
+        return handle, cnt_handle
 
 if __name__ == "__main__":
     Combiner(2, "/home/nopper/Source/pydex/outputs")

@@ -35,6 +35,9 @@ class Mapper(object):
         comm.Barrier()
 
         log.info("[3] Starting (rank=%d)" % rank)
+        self.execute_on_request(self.word_scrambler)
+        log.info("[3] Finished (rank=%d)" % rank)
+        comm.Barrier()
 
     def execute_on_request(self, callback):
         self.tasks = 0
@@ -61,6 +64,27 @@ class Mapper(object):
                 sleep(2)
             else:
                 callback(msg)
+
+    def word_scrambler(self, path):
+        self.tasks += 1
+        reducers = self.reducers
+
+        with open(path, 'r') as f:
+            with contextlib.closing(mmap.mmap(f.fileno(), 0,
+                                    access=mmap.ACCESS_READ)) as m:
+                line = m.readline()
+
+                while line:
+                    doc_id, word, word_count, word_per_doc = \
+                            line.strip().split(' ', 3)
+
+                    dst_reducer = hash(word) % len(reducers)
+                    comm.send((word, int(doc_id), int(word_count),
+                               int(word_per_doc)), dest=reducers[dst_reducer])
+                    line = m.readline()
+
+        log.info("Removing file %s" % path)
+        os.unlink(path)
 
     def word_count_per_doc(self, path):
         self.tasks += 1
