@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 
 from mpi4py import MPI
+from bisect import insort, bisect
 from heapq import heappush, heappop
 from tempfile import NamedTemporaryFile
-from collections import OrderedDict, defaultdict
 
 from struct import calcsize, pack
 from tags import *
@@ -19,15 +19,19 @@ comm = MPI.COMM_WORLD
 
 class Reducer(object):
     def __init__(self, output_path, num_mappers):
-        log.info("Started a new reducer on %s (rank=%d)" % (name, rank))
+        log.info("[0] Reducer at %s (rank=%d)" % (name, rank))
 
         self.output_path = output_path
         self.num_workers = num_mappers
 
+        log.info("[1] Starting")
         self.reduce_word_count()
+        log.info("[1] Finished")
         comm.Barrier()
 
+        log.info("[2] Starting")
         self.reduce_word_count_per_doc()
+        log.info("[2] Finished")
         comm.Barrier()
 
     def reduce_word_count_per_doc(self):
@@ -42,8 +46,10 @@ class Reducer(object):
         num_words = 0
         words_length = 0
 
-        word_heap = []
         doc_dict = {}
+        docid_list = []
+        words_list = []
+
         threshold = 1024 * 1024 # 1 MByte
 
         while remaining > 0:
@@ -51,47 +57,59 @@ class Reducer(object):
 
             if msg == MSG_COMMAND_QUIT:
                 remaining -= 1
+                log.debug("Received termination message from %d" % \
+                        status.Get_source())
             else:
                 doc_id, word, word_count = msg
 
-                if not word in word_heap:
-                    heappush(word_heap, word)
+                if not doc_id in doc_dict:
+                    counter = [0, {}]
+                    doc_dict[doc_id] = counter
+
+                    num_docs += 1
+                    insort(docid_list, doc_id)
+                else:
+                    counter = doc_dict[doc_id]
+
+                counter[0] += word_count
+
+                if not word in counter[1]:
+                    counter[1][word] = word_count
+
                     num_words += 1
                     words_length += len(word)
+                    pos = bisect(words_list, word)
 
-                if not doc_id in doc_dict:
-                    doc_dict[doc_id] = [0, defaultdict(int)]
-                    num_docs += 1
-
-                doc_tuple = doc_dict[doc_id]
-                doc_tuple[0] += word_count
-                doc_tuple[1][word] += word_count
+                    if not words_list or words_list[max(0, pos - 1)] != word:
+                        words_list.insert(pos, word)
+                else:
+                    counter[1][word] += word_count
 
             # This is somehow dummy
             if words_length > threshold or remaining == 0:
-                self.write_word_count_per_doc(word_heap, doc_dict)
+                self.write_word_count_per_doc(docid_list, words_list, doc_dict)
 
-                doc_dict = {} # Or maybe clear?
+                doc_dict = {}
+                docid_list = []
+                words_list = []
+
                 num_docs = 0
                 num_words = 0
                 words_length = 0
 
-    def write_word_count_per_doc(self, word_heap, doc_dict):
+    def write_word_count_per_doc(self, docid_list, words_list, doc_dict):
         handle = NamedTemporaryFile(prefix='reduce-2-chunk-',
                                     dir=self.output_path, delete=False)
 
-        doc_ids = sorted(doc_dict.keys())
+        for docid in docid_list:
+            counter = doc_dict[docid]
 
-        while word_heap:
-            word = heappop(word_heap)
+            for word in words_list:
+                if word not in counter[1]:
+                    continue
 
-            for doc_id in doc_ids:
-                dct = doc_dict[doc_id]
-                doc_word_count = dct[0]
-                word_count     = dct[1][word]
-
-                handle.write("%s %d %d %d\n" % \
-                    (word, doc_id, word_count, doc_word_count)
+                handle.write("%d %s %d %d\n" % \
+                    (docid, word, counter[1][word], counter[0])
                 )
 
         handle.close()
@@ -107,7 +125,7 @@ class Reducer(object):
 
             if msg == MSG_COMMAND_QUIT:
                 remaining -= 1
-                log.info("Received termination message from %d" % \
+                log.debug("Received termination message from %d" % \
                         status.Get_source())
             else:
                 word, doc_id = msg
@@ -144,4 +162,4 @@ class Reducer(object):
         handle.write("%s %d %d\n" % (word, doc_id, counter))
         handle.close()
 
-        log.info("Wrote partition as %s" % handle.name)
+        log.debug("Wrote partition as %s" % handle.name)

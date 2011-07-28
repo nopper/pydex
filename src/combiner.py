@@ -4,7 +4,7 @@ import mmap
 import contextlib
 
 from mpi4py import MPI
-from heapq import merge
+from heapq import merge, heapify, heappop, heapreplace
 
 from tags import *
 from logger import get_logger
@@ -18,25 +18,43 @@ name = MPI.Get_processor_name()
 comm = MPI.COMM_WORLD
 
 class KeyValueReader(object):
-    def __init__(self, path, delete=True):
+    def __init__(self, path, converter=None, delete=True):
         """
         @param path the file to read key-values from
+        @param converter the converter to apply in order to parse the lines
         @param delete set to True if you want to delete the file after having
                       read all the contents
         """
         self.path = path
         self.delete = delete
+        self.converter = converter or KeyValueReader.first_phase
+
+    @staticmethod
+    def first_phase(line):
+        word, doc_id, counter = line.split(' ', 2)
+        doc_id = int(doc_id)
+        counter = int(counter)
+
+        return (word, doc_id, counter)
+
+    @staticmethod
+    def second_phase(line):
+        doc_id, word, word_count, word_per_doc = line.split(' ', 3)
+        doc_id = int(doc_id)
+        word_count = int(word_count)
+        word_per_doc = int(word_per_doc)
+
+        return (doc_id, word, word_count, word_per_doc)
 
     def iterate(self):
         with open(self.path, 'r') as f:
             with contextlib.closing(mmap.mmap(f.fileno(), 0,
                                     access=mmap.ACCESS_READ)) as m:
-                for line in f.readlines():
-                    word, doc_id, counter = line.strip().split(' ', 2)
-                    doc_id = int(doc_id)
-                    counter = int(counter)
+                line = m.readline()
 
-                    yield (word, doc_id, counter)
+                while line:
+                    yield (self.converter(line.strip()))
+                    line = m.readline()
 
         if self.delete:
             os.unlink(self.path)
@@ -44,16 +62,113 @@ class KeyValueReader(object):
 # This shit can be also implemented as a CUDA shitty stuff
 class Combiner(object):
     def __init__(self, num_mappers, input_path):
-        log.info("Started a new combiner on %s (rank=%d). Blocked on a barrier" % (name, rank))
-        comm.Barrier()
+        self.num_mappers = num_mappers
+        self.input_path = input_path
 
         self.is_master_warned = False
         self.input_path = input_path
         self.last_partition = 0
 
+        log.info("[0] Combiner at %s (rank=%d). Blocked on a barrier" % (name, rank))
+        comm.Barrier()
+
+        log.info("[2] Starting first phase")
+        self.first_phase()
+
+        log.info("[2] Finished combining. Waiting all the reducers for the 2 phase")
+        comm.Barrier()
+
+        # The combiner is ahead of one round in fact it process data of the jth
+        # -1 stage while mappers are processing results of the jth phase. The
+        # pipeline approach is therefore here.
+
+        log.info("[3] Starting third phase")
+        self.second_phase()
+        log.info("[3] Finished")
+
+        comm.Barrier()
+
+    def second_phase(self):
+        inputs = []
+
+        for path in os.listdir(self.input_path):
+            if not path.startswith("reduce-2-"):
+                continue
+
+            path = os.path.join(self.input_path, path)
+
+            inputs.append(KeyValueReader(path,
+                                         KeyValueReader.second_phase).iterate())
+
+        heap = []
+        for id, iter in enumerate(inputs):
+            try:
+                item = iter.next()
+                toadd = (item, id, iter)
+                heap.append(toadd)
+            except StopIteration:
+                pass
+
+        prev_docid = -1
+        curr_word_per_doc = 0
+
+        docid = -1
+        word = None
+        word_count = -1
+
+        heapify(heap)
+
+        length = 0
+        threshold = 1024 * 1024
+        handle = self.new_partition()
+
+        while heap:
+            item, id, iter = heap[0]
+
+            if item[0] == docid and item[1] == word:
+                word_count += item[2]
+            else:
+                if word is not None:
+                    msg = "%d %s %d %d\n" % \
+                        (docid, word, word_count,
+                                curr_word_per_doc)
+
+                    handle.write(msg)
+                    length += len(msg)
+
+                docid, word, word_count, word_per_doc = item
+
+            if prev_docid != docid:
+                curr_word_per_doc = word_per_doc
+
+                for new_item, new_id, new_iter in heap:
+                    if new_id != id and new_item[0] == item[0]:
+                        curr_word_per_doc += new_item[3]
+
+            prev_docid = docid
+
+            try:
+                heapreplace(heap, (iter.next(), id, iter))
+            except StopIteration:
+                heappop(heap)
+
+            if length > threshold:
+                length = 0
+
+                handle.close()
+                handle = self.new_partition(handle)
+
+        if word is not None:
+            msg = "%d %s %d %d\n" % \
+                (docid, word, word_count, curr_word_per_doc)
+
+            handle.write(msg)
+            handle.close()
+
+    def first_phase(self):
         # Ok here we need to open various inputs
-        inputs = [os.path.join(input_path, path)
-            for path in os.listdir(input_path)
+        inputs = [os.path.join(self.input_path, path)
+            for path in os.listdir(self.input_path)
         ]
 
         inputs = [KeyValueReader(path).iterate()
@@ -104,6 +219,7 @@ class Combiner(object):
         log.info("Finished combininig the results of the first phase")
         comm.send(MSG_COMMAND_QUIT, dest=NODE_MASTER)
 
+
     def finish_partition(self, handle):
         if handle is not None:
             fname = os.path.basename(handle.name)
@@ -132,3 +248,6 @@ class Combiner(object):
             self.finish_partition(curr_handle)
 
         return handle
+
+if __name__ == "__main__":
+    Combiner(2, "/home/nopper/Source/pydex/outputs")

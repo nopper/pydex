@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 
+import os
 import sys
 import mmap
 import contextlib
 
 from tags import *
+from time import sleep
 from mpi4py import MPI
 from logger import get_logger
 from extractor import DocumentExtractor
@@ -17,22 +19,22 @@ name = MPI.Get_processor_name()
 
 class Mapper(object):
     def __init__(self, reducers):
-        log.info("Started a new mapper on %s (rank=%d)" % (name, rank))
+        log.info("[0] Mapper at %s (rank=%d)" % (name, rank))
 
         self.tasks = 0
         self.reducers = reducers
 
-        log.info("Starting first phase (rank=%d)" % rank)
+        log.info("[1] Starting (rank=%d)" % rank)
         self.execute_on_request(self.word_count)
-        log.info("First phase concluded (rank=%d)" % rank)
+        log.info("[1] Finished (rank=%d)" % rank)
         comm.Barrier()
 
-        log.info("Starting second phase (rank=%d)" % rank)
+        log.info("[2] Starting (rank=%d)" % rank)
         self.execute_on_request(self.word_count_per_doc)
-        log.info("Second phase concluded (rank=%d)" % rank)
+        log.info("[2] Finished (rank=%d)" % rank)
         comm.Barrier()
 
-        log.info("Starting third phase (rank=%d)" % rank)
+        log.info("[3] Starting (rank=%d)" % rank)
 
     def execute_on_request(self, callback):
         self.tasks = 0
@@ -43,9 +45,9 @@ class Mapper(object):
             msg = comm.recv(source=NODE_MASTER)
 
             if msg == MSG_COMMAND_QUIT:
-                log.info("Terminating mapper on %s (rank=%d) as requested"
-                         " after having computed %d tasks." % \
-                         (name, rank, self.tasks))
+                log.debug("Terminating mapper on %s (rank=%d) as requested"
+                          " after having computed %d tasks." % \
+                          (name, rank, self.tasks))
 
                 # We have also to send termination message to the reducers
 
@@ -54,6 +56,9 @@ class Mapper(object):
                     comm.ssend(MSG_COMMAND_QUIT, dest=reducer)
 
                 exit = True
+            elif msg == MSG_COMMAND_WAIT:
+                log.debug("Sleeping 2 seconds")
+                sleep(2)
             else:
                 callback(msg)
 
@@ -69,14 +74,17 @@ class Mapper(object):
                                     access=mmap.ACCESS_READ)) as m:
                 line = m.readline()
 
-                if not line:
-                    return
+                while line:
+                    word, doc_id, word_count = line.strip().split(' ', 2)
 
-                word, doc_id, word_count = line.strip().split(' ', 2)
+                    dst_reducer = hash(word) % len(reducers)
+                    comm.send((int(doc_id), word, int(word_count)),
+                              dest=reducers[dst_reducer])
 
-                dst_reducer = hash(word) % len(reducers)
-                comm.send((int(doc_id), word, int(word_count)),
-                          dest=reducers[dst_reducer])
+                    line = m.readline()
+
+        log.info("Removing file %s" % path)
+        os.unlink(path)
 
     def word_count(self, (path, doc_id)):
         reducers = self.reducers

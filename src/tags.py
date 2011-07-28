@@ -5,6 +5,7 @@ NODE_COMBINER        = 1
 
 MSG_STATUS_AVAILABLE     = 1
 MSG_COMMAND_QUIT         = 2
+MSG_COMMAND_WAIT         = 3
 
 PHASE_ONE = 0xdead
 PHASE_TWO = 0xbeef

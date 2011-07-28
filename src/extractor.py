@@ -12,6 +12,9 @@ class DocumentExtractor(object):
             with contextlib.closing(mmap.mmap(f.fileno(), 0,
                                     access=mmap.ACCESS_READ)) as m:
 
-                for line in f.readlines():
+                line = m.readline()
+
+                while line:
                     for word in preprocess_string(line):
                         yield word
+                    line = m.readline()

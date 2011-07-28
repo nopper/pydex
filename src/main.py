@@ -24,9 +24,9 @@ SNODES = 2
 
 class Master(object):
     def __init__(self, input_path, output_path, num_mappers, num_reducers):
-        log.info("Master is located at rank=%d" % rank)
-        log.info("Starting the reverse index construction on '%s' with %d" \
-                 " mappers and %d reducers." %                             \
+        log.info("[0] Master is located at rank=%d" % rank)
+        log.info("[0] Starting the reverse index construction on '%s' " \
+                 "with %d mappers and %d reducers." %                   \
                  (input_path, num_mappers, num_reducers))
 
         self.input_path = input_path
@@ -35,10 +35,14 @@ class Master(object):
         self.num_reducers = num_reducers
 
     def start(self):
+        log.info("[1] Starting")
         self.first_phase()
+        log.info("[1] Finished. Waiting on a Barrier")
         comm.Barrier()
 
+        log.info("[2] Starting")
         self.second_phase()
+        log.info("[2] Finished. Waiting on a Barrier")
         comm.Barrier()
 
     def first_phase(self):
@@ -65,8 +69,8 @@ class Master(object):
                 comm.send(self.files.pop(), dest=status.Get_source())
 
         for i in xrange(self.num_mappers):
-            log.info("Sending termination message to %d" % \
-                     (self.num_reducers + i + SNODES))
+            log.debug("Sending termination message to %d" % \
+                      (self.num_reducers + i + SNODES))
             comm.send(MSG_COMMAND_QUIT, dest=self.num_reducers + i + SNODES)
 
     def refresh_input_list(self, file_set, assigned_set):
@@ -77,47 +81,46 @@ class Master(object):
         return file_set
 
     def second_phase(self):
-        log.info("Waiting for message from the combiner. About to start")
+        log.debug("Waiting for message from the combiner. About to start")
         data = comm.recv(source=NODE_COMBINER)
-        log.info("Received. Entering the second phase loop")
+        log.debug("Received. Entering the second phase loop")
 
         no_more_inputs = False
         assigned = set()
         files = set()
 
-        while True:
+        remaining = self.num_mappers
+
+        while remaining > 0:
             msg = comm.recv(source=MPI.ANY_SOURCE, status=status)
 
             if not no_more_inputs and not files:
-                # Refresh our input list in the case the combiner created new
-                # inputs
-
-                while True:
-                    files = self.refresh_input_list(files, assigned)
-
-                    if not files:
-                        log.info("Sleeping 4 seconds for new files to show up")
-                        sleep(4)
-                    else:
-                        break
+                files = self.refresh_input_list(files, assigned)
 
             # Here we go with a pythonic switch case made of cascaded ifs
 
             if status.Get_source() == NODE_COMBINER and msg == MSG_COMMAND_QUIT:
-                self.refresh_input_list(files, assigned)
+                files = self.refresh_input_list(files, assigned)
                 no_more_inputs = True
 
-                log.info("Combiner has finished the first phase. No more "
-                         "inputs are available (%d left)" % len(files))
+                log.debug("Combiner has finished the first phase. No more "
+                          "inputs are available (%d left)" % len(files))
 
             elif msg == MSG_STATUS_AVAILABLE:
                 if files:
-                    comm.send(os.path.join(self.output_path, files.pop()),
+                    target = files.pop()
+                    assigned.add(target)
+
+                    comm.send(os.path.join(self.output_path, target),
                               dest=status.Get_source())
                 else:
-                    log.info("Sending termination messages for the second "
-                             "phase to mapper")
-                    comm.send(MSG_COMMAND_QUIT, dest=status.Get_source())
+                    if no_more_inputs:
+                        log.debug("Sending termination messages for the second "
+                                  "phase to mapper")
+                        comm.send(MSG_COMMAND_QUIT, dest=status.Get_source())
+                        remaining -= 1
+                    else:
+                        comm.send(MSG_COMMAND_WAIT, dest=status.Get_source())
 
 def initialize_indexer(input_path, output_path, num_mappers, num_reducers):
     if size != 2 + num_mappers + num_reducers:
