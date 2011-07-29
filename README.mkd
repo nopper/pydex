@@ -157,7 +157,7 @@ They might be not in order
 (<#2>, world, 1, 2),
 
 (<#3>, hello, 1, 4),
-(<#3>, bar, 1, 4),
+(<#3>, bar, 2, 4),
 (<#3>, world, 1, 4)
 
 
@@ -180,20 +180,20 @@ While the reducer:
 
 Mapper #1: (<hello>, #1, 1, 5), (<foo>,    #1, 2, 5), (<python>, #1, 1, 5)
 Mapper #2: (<world>, #1, 1, 5), (<python>, #2, 1, 2), (<world>,  #2, 1, 2)
-Mapper #3: (<hello>, #3, 1, 4), (<bar>,    #3, 1, 4), (<world>,  #3, 1, 4)
+Mapper #3: (<hello>, #3, 1, 4), (<bar>,    #3, 2, 4), (<world>,  #3, 1, 4)
 
 Reducer: (<hello>, #1, 1, 5, 0), (<foo>, #1, 2, 5, 0), (<world>, #1, 1, 5, 0), (<python>, #2, 1, 2, 0), (<hello>, #3, 1, 4, 0)
-         (<bar>, #3, 1, 4, 0), (<python>, #1, 1, 5, 0), (<world>, #2, 1, 2, 0), (<world>, #3, 1, 4, 0)
+         (<bar>, #3, 2, 4, 0), (<python>, #1, 1, 5, 0), (<world>, #2, 1, 2, 0), (<world>, #3, 1, 4, 0)
 
 Reducer after sorting:
 
 Reducer: (<foo, #1>, 2, 5, 1), (<hello, #1>, 1, 5, 2), (<hello, #3>, 1, 4, 2), (<python, #2>, 1, 2, 1), (<world, #1>, 1, 5, 1)
-         (<bar, #3>, 1, 4, 1), (<python, #1>, 1, 5, 1), (<world, #2>, 1, 2, 2), (<world, #3>, 1, 4, 2)
+         (<bar, #3>, 2, 4, 1), (<python, #1>, 1, 5, 1), (<world, #2>, 1, 2, 2), (<world, #3>, 1, 4, 2)
 
 Combiner:
 
+(<bar, #3>, 2, 4, 1),
 (<foo, #1>, 2, 5, 1),
-(<bar, #3>, 1, 4, 1),
 (<hello, #1>, 1, 5, 2),
 
 (<hello, #3>, 1, 4, 2),
@@ -212,8 +212,8 @@ on a secondary file buffer.
 Final phase
 ===========
 
-Mapper #1: <foo, #1>    => (2 / 5) * log(3 / 1) = 0.63
-           <bar, #3>    => (1 / 4) * log(3 / 1) = 0.39
+Mapper #1: <bar, #3>    => (2 / 4) * log(3 / 1) = 0.79
+           <foo, #1>    => (2 / 5) * log(3 / 1) = 0.63
            <hello, #1>  => (1 / 5) * log(3 / 2) = 0.12
 
 Mapper #2: <hello, #3>  => (1 / 4) * log(3 / 2) = 0.15
