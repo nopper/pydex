@@ -56,6 +56,13 @@ class KeyValueReader(object):
 
         return (word, doc_id, word_count, word_per_doc, docs_per_word)
 
+    @staticmethod
+    def fourth_phase(line):
+        doc_id, word, weight = line.split(' ', 2)
+        doc_id = int(doc_id)
+        weight = float(weight)
+
+        return (doc_id, word, weight)
 
     def iterate(self):
         with open(self.path, 'r') as f:
@@ -106,9 +113,54 @@ class Combiner(object):
         self.is_master_warned = False
         self.last_partition = 0
 
-        log.info("[4] Starting fourth phase")
+        log.info("[4] starting fourth phase")
         self.third_phase()
-        log.info("[4] Finished")
+        log.info("[4] finished")
+
+        comm.Barrier()
+
+        # No need to warn the master at this point
+        self.last_partition = 0
+
+        log.info("[5] starting fourth phase")
+        self.fourth_phase()
+        log.info("[5] finished")
+
+
+    def fourth_phase(self):
+        # Ok here we need to open various inputs
+        inputs = [os.path.join(self.input_path, path)
+            for path in os.listdir(self.input_path)
+        ]
+
+        inputs = [KeyValueReader(path, KeyValueReader.fourth_phase).iterate()
+            for path in inputs if os.stat(path).st_size != 0
+        ]
+
+        length = 0
+        threshold = 1024 * 1024
+
+        handle = self.new_partition()
+
+        # I don't like this style though
+        for item in merge(*inputs):
+            doc_id, word, weight = item
+
+            msg = "%d %s %.10f\n" % (doc_id, word, weight)
+            handle.write(msg)
+            length += len(msg)
+
+            if length > threshold:
+                length = 0
+
+                handle.close()
+                handle = self.new_partition(handle)
+
+        handle.close()
+        self.finish_partition(handle)
+
+        log.info("Finished combininig the results of the fourth phase")
+        comm.send(MSG_COMMAND_QUIT, dest=NODE_MASTER)
 
     def third_phase(self):
         inputs = []

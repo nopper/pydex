@@ -40,6 +40,50 @@ class Reducer(object):
         log.info("[3] Finished")
         comm.Barrier()
 
+        log.info("[4] Starting")
+        self.reduce_weights()
+        log.info("[4] Finished")
+        comm.Barrier()
+
+    def reduce_weights(self):
+        remaining = self.num_workers
+
+        heap = []
+        words_length = 0
+        threshold = 1024 * 1024
+
+        while remaining > 0:
+            msg = comm.recv(source=MPI.ANY_SOURCE, status=status)
+
+            if msg == MSG_COMMAND_QUIT:
+                remaining -= 1
+                log.debug("Received termination message from %d" % \
+                        status.Get_source())
+            else:
+                doc_id, word, weight = msg
+                heappush(heap, msg)
+
+                words_length += len(word)
+
+                if words_length > threshold or remaining == 0:
+                    self.write_weights(heap)
+                    words_length = 0
+
+        self.write_weights(heap)
+
+    def write_weights(self, heap):
+        if not heap:
+            return
+
+        handle = NamedTemporaryFile(prefix='reduce-4-chunk-',
+                                    dir=self.output_path, delete=False)
+
+        while heap:
+            doc_id, word, weight = heappop(heap)
+            handle.write("%d %s %.10f\n" % (doc_id, word, weight))
+
+        handle.close()
+
     def reduce_words_per_doc(self):
         remaining = self.num_workers
 

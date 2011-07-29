@@ -3,6 +3,7 @@
 import os
 import sys
 import mmap
+import math
 import contextlib
 
 from tags import *
@@ -11,11 +12,11 @@ from mpi4py import MPI
 from logger import get_logger
 from extractor import DocumentExtractor
 
-log = get_logger('mapper')
-
 comm = MPI.COMM_WORLD
 rank = MPI.COMM_WORLD.Get_rank()
 name = MPI.Get_processor_name()
+
+log = get_logger('mapper-%d' % rank)
 
 class Mapper(object):
     def __init__(self, reducers):
@@ -39,6 +40,11 @@ class Mapper(object):
         log.info("[3] Finished (rank=%d)" % rank)
         comm.Barrier()
 
+        log.info("[4] Starting (rank=%d)" % rank)
+        self.execute_on_request(self.weight)
+        log.info("[4] Finished (rank=%d)" % rank)
+        comm.Barrier()
+
     def execute_on_request(self, callback):
         self.tasks = 0
         exit = False
@@ -48,7 +54,7 @@ class Mapper(object):
             msg = comm.recv(source=NODE_MASTER)
 
             if msg == MSG_COMMAND_QUIT:
-                log.debug("Terminating mapper on %s (rank=%d) as requested"
+                log.info("Terminating mapper on %s (rank=%d) as requested"
                           " after having computed %d tasks." % \
                           (name, rank, self.tasks))
 
@@ -60,10 +66,56 @@ class Mapper(object):
 
                 exit = True
             elif msg == MSG_COMMAND_WAIT:
-                log.debug("Sleeping 2 seconds")
+                log.info("Sleeping 2 seconds")
                 sleep(2)
             else:
                 callback(msg)
+
+    def weight(self, (path, cnt_path, num_docs)):
+        self.tasks += 1
+        reducers = self.reducers
+
+        with open(path, 'r') as f1:
+            with open(cnt_path, 'r') as f2:
+                with contextlib.closing(mmap.mmap(f1.fileno(), 0,
+                                        access=mmap.ACCESS_READ)) as m1:
+                    with contextlib.closing(mmap.mmap(f2.fileno(), 0,
+                                            access=mmap.ACCESS_READ)) as m2:
+
+                        line1 = m1.readline()
+                        line2 = m2.readline()
+
+                        while line1 and line2:
+                            word, doc_id, word_count, word_per_doc = \
+                                line1.strip().split(' ', 3)
+                            doc_per_word = line2.strip()
+
+                            doc_id = int(doc_id)
+                            word_count = int(word_count)
+                            word_per_doc = int(word_per_doc)
+                            doc_per_word = int(doc_per_word)
+
+                            weight = (float(word_count) /             \
+                                      float(word_per_doc)) *          \
+                                     math.log(float(num_docs) /       \
+                                              float(doc_per_word), 2)
+
+#                            print "%s %d / %d * log(%d / %d)" % (word, word_count,
+#                                    word_per_doc, num_docs, doc_per_word)
+
+                            if weight != 0:
+                                dst_reducer = hash(doc_id) % len(reducers)
+                                comm.send((doc_id, word, weight),
+                                          dest=reducers[dst_reducer])
+
+                            line1 = m1.readline()
+                            line2 = m2.readline()
+
+        log.info("Removing file %s" % path)
+        os.unlink(path)
+
+        log.info("Removing file %s" % cnt_path)
+        os.unlink(cnt_path)
 
     def word_scrambler(self, path):
         self.tasks += 1

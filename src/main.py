@@ -51,6 +51,71 @@ class Master(object):
         log.info("[3] Finished. Waiting on a Barrier")
         comm.Barrier()
 
+        log.info("[4] Starting")
+        self.fourth_phase()
+        log.info("[4] Finished. Waiting on a Barrier")
+        comm.Barrier()
+
+    def refresh_inputs(self, file_set, assigned_set):
+        files = os.listdir(self.output_path)
+
+        for path in files:
+            if path.startswith("input-cnt-"):
+                target = "input-" + path[10:]
+                tup = (target, path)
+
+                if tup not in assigned_set:
+                    file_set.add(tup)
+
+        return file_set
+
+    def fourth_phase(self):
+        log.debug("Waiting for message from the combiner. About to start")
+        data = comm.recv(source=NODE_COMBINER)
+        log.debug("Received. Entering the second phase loop")
+
+        no_more_inputs = False
+        assigned = set()
+        files = set()
+
+        mappers = set()
+
+        while len(mappers) != self.num_mappers:
+            msg = comm.recv(source=MPI.ANY_SOURCE, status=status)
+            source = status.Get_source()
+
+            if not no_more_inputs and not files:
+                files = self.refresh_inputs(files, assigned)
+
+            # Here we go with a pythonic switch case made of cascaded ifs
+
+            if source == NODE_COMBINER and msg == MSG_COMMAND_QUIT:
+                files = self.refresh_inputs(files, assigned)
+                no_more_inputs = True
+
+                log.debug("Combiner has finished the first phase. No more "
+                          "inputs are available (%d left)" % len(files))
+
+            elif msg == MSG_STATUS_AVAILABLE:
+                if files:
+                    tup = files.pop()
+                    assigned.add(tup)
+
+                    target, newtarget = tup
+                    target = os.path.join(self.output_path, target)
+                    newtarget = os.path.join(self.output_path, newtarget)
+
+                    msg = (target, newtarget, self.num_docs)
+                    comm.send(msg, dest=source)
+                else:
+                    if no_more_inputs and source not in mappers:
+                        log.debug("Sending termination messages for the second "
+                                  "phase to mapper")
+                        comm.send(MSG_COMMAND_QUIT, dest=source)
+                        mappers.add(source)
+                    else:
+                        comm.send(MSG_COMMAND_WAIT, dest=source)
+
     def third_phase(self):
         self.second_phase()
 
