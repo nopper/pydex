@@ -10,13 +10,13 @@ from struct import calcsize, pack
 from tags import *
 from logger import get_logger
 
-log = get_logger('reducer')
-
 rank = MPI.COMM_WORLD.Get_rank()
 name = MPI.Get_processor_name()
 
 status = MPI.Status()
 comm = MPI.COMM_WORLD
+
+log = get_logger('reducer-%d' % rank)
 
 class Reducer(object):
     def __init__(self, output_path, num_mappers):
@@ -53,7 +53,7 @@ class Reducer(object):
 
             if msg == MSG_COMMAND_QUIT:
                 remaining -= 1
-                log.debug("Received termination message from %d" % \
+                log.info("Received termination message from %d" % \
                         status.Get_source())
             else:
                 word, doc_id, word_count, word_per_doc = msg
@@ -71,6 +71,9 @@ class Reducer(object):
         self.write_words_per_doc(heap, words_dct)
 
     def write_words_per_doc(self, heap, words_dct):
+        if not heap:
+            return
+
         handle = NamedTemporaryFile(prefix='reduce-3-chunk-',
                                     dir=self.output_path, delete=False)
 
@@ -144,7 +147,12 @@ class Reducer(object):
                 num_words = 0
                 words_length = 0
 
+        self.write_word_count_per_doc(docid_list, words_list, doc_dict)
+
     def write_word_count_per_doc(self, docid_list, words_list, doc_dict):
+        if not docid_list:
+            return
+
         handle = NamedTemporaryFile(prefix='reduce-2-chunk-',
                                     dir=self.output_path, delete=False)
 
@@ -184,6 +192,8 @@ class Reducer(object):
                 self.write_partition(heap)
                 heap = []
                 length = 0
+
+        self.write_partition(heap)
 
     def write_partition(self, heap):
         if not heap:

@@ -29,6 +29,7 @@ class Master(object):
                  "with %d mappers and %d reducers." %                   \
                  (input_path, num_mappers, num_reducers))
 
+        self.num_docs = 0
         self.input_path = input_path
         self.output_path = output_path
         self.num_mappers = num_mappers
@@ -66,6 +67,7 @@ class Master(object):
             self.files.append((path, docid))
             docid += 1
 
+        self.num_docs = docid - 1
 
         # This is a merely farm. Each worker connects to this server and we
         # assign it a file to scan
@@ -97,17 +99,18 @@ class Master(object):
         assigned = set()
         files = set()
 
-        remaining = self.num_mappers
+        mappers = set()
 
-        while remaining > 0:
+        while len(mappers) != self.num_mappers:
             msg = comm.recv(source=MPI.ANY_SOURCE, status=status)
+            source = status.Get_source()
 
             if not no_more_inputs and not files:
                 files = self.refresh_input_list(files, assigned)
 
             # Here we go with a pythonic switch case made of cascaded ifs
 
-            if status.Get_source() == NODE_COMBINER and msg == MSG_COMMAND_QUIT:
+            if source == NODE_COMBINER and msg == MSG_COMMAND_QUIT:
                 files = self.refresh_input_list(files, assigned)
                 no_more_inputs = True
 
@@ -120,15 +123,15 @@ class Master(object):
                     assigned.add(target)
 
                     comm.send(os.path.join(self.output_path, target),
-                              dest=status.Get_source())
+                              dest=source)
                 else:
-                    if no_more_inputs:
-                        log.debug("Sending termination messages for the second "
-                                  "phase to mapper")
-                        comm.send(MSG_COMMAND_QUIT, dest=status.Get_source())
-                        remaining -= 1
+                    if no_more_inputs and source not in mappers:
+                        log.info("Sending termination messages for the second "
+                                  "phase to mapper to %d" % source)
+                        comm.send(MSG_COMMAND_QUIT, dest=source)
+                        mappers.add(source)
                     else:
-                        comm.send(MSG_COMMAND_WAIT, dest=status.Get_source())
+                        comm.send(MSG_COMMAND_WAIT, dest=source)
 
 def initialize_indexer(input_path, output_path, num_mappers, num_reducers):
     if size != 2 + num_mappers + num_reducers:

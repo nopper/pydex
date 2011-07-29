@@ -68,6 +68,7 @@ class KeyValueReader(object):
                     line = m.readline()
 
         if self.delete:
+            log.info("Removing KeyValueReader file %s" % self.path)
             os.unlink(self.path)
 
 # This shit can be also implemented as a CUDA shitty stuff
@@ -335,9 +336,13 @@ class Combiner(object):
 
     def finish_partition(self, handle):
         if handle is not None:
-            fname = os.path.basename(handle.name)
-            os.rename(handle.name,
-                      os.path.join(self.input_path, 'input%s' % fname[4:]))
+            src = handle.name
+            dst = os.path.join(self.input_path,
+                               'input%s' % os.path.basename(handle.name)[4:])
+
+            handle.close()
+            os.rename(src, dst)
+            log.info("Renamed %s to %s" % (src, dst))
 
             # Now we can already start the new workers to start the second
             # phase on the previous partition. The idea is to rename the
@@ -372,12 +377,25 @@ class Combiner(object):
         return handle
 
     def new_assoc_partition(self, curr_handle=None, curr_cnt_handle=None):
-        handle = \
-            NamedTemporaryFile(prefix='part-{:06d}-'.format(self.last_partition),
-                               dir=self.input_path, delete=False)
-        cnt_handle = \
-            NamedTemporaryFile(prefix='part-cnt-{:06d}-'.format(self.last_partition),
-                               dir=self.input_path, delete=False)
+        fail = True
+
+        while fail:
+            handle = \
+                NamedTemporaryFile(prefix='part-{:06d}-'.format(self.last_partition),
+                                   dir=self.input_path, delete=False)
+
+            fname = os.path.join(os.path.dirname(handle.name),
+                                 "part-cnt-" + os.path.basename(handle.name)[5:])
+
+            try:
+                cnt_handle = open(fname, "w+b")
+                fail = False
+            except:
+                log.error("Impossible to create association.")
+                log.info("Removing leftover %s" % handle.name)
+
+                handle.close()
+                os.unlink(handle.name)
 
         self.last_partition += 1
 
@@ -385,6 +403,3 @@ class Combiner(object):
             self.finish_assoc_partition(curr_handle, curr_cnt_handle)
 
         return handle, cnt_handle
-
-if __name__ == "__main__":
-    Combiner(2, "/home/nopper/Source/pydex/outputs")
