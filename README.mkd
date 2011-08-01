@@ -233,3 +233,12 @@ Document #1 | 0.63 | -    | 0.12 | 0.12 |
 Document #2 | -    | -    | -    | 0.29 |
 Document #3 | -    | 0.39 | 0.15 | -    |
 ------------+------+------+------+------+
+
+Implementation
+==============
+
+Instead of counting the number of termination messages from the mappers
+the reducer can simply wait the termination message from the master.
+This would simplify the code a lot and make it possible to introduce
+dynamic process feature in the code (varying at runtime the number of
+mappers involved).
