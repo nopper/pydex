@@ -37,14 +37,45 @@ recommend you to use virtualenv. You can successively use the
 
 ## How to run?
 
-For the moment being, only simple plain text file indexing is supported.
-In order to test pydex you have to put some files you have to launch
-main.py file by passing as first argument the directory containing the
-files to index and as second argument the temporary directory used for
-storage of partial files. Please note that both directories should be
-accessible by the remote Python MPI interpreters. Therefore a mechanism
-like NFS or a distributed/network filesystem should be used. This is not
-required if you are testing pydex on a single machine.
+We have used pydex to run a reverse index creation on top of a wikipedia
+dump. In order to successfully reiterate our experiment you have to
+download the latest dump of wikipedia database from [this
+page](http://dumps.wikimedia.org/enwiki/latest/). The file you have to
+download is called `enwiki-latest-pages-articles.xml.bz2` and its size
+is about 7.0GB.
+
+After you download it, you have to pass it through a preliminary phase
+by using `wiki-extractor` script which resides in `src/utils` directory.
+What you have to do is to specify an output directory and the size in
+bytes of the partitions you want to create:
+
+    $ bzcat enwiki-latest-pages-articles.xml.bz2 | \
+      python src/utils/wiki-extractor.py /mnt/root/collection 66060288
+
+This command will extract on the fly the dump file of wikipedia and pipe
+the contents to our script. The script is in charge of filtering out and
+in converting articles contents and to recompress them in tgz archives
+of about 64MB each.
+
+This preliminary phase of conversion is needed to feed our indexer. The
+extraction and recompression takes about 3 hours and half. After having
+completed this step you are ready to launch the real indexing phase.
+
+Take a look at the configuration file `pydex.json` in order to specify
+input/output directories and other settings. Then you can spawn your
+command by simply running:
+
+    $ mpiexec -np 6 python src/main.py
+
+The default configuration has 2 mappers, 2 reducers. You have to take in
+consideration that 1 master and 1 combiner node will be needed. That is
+the reason why you have to specify 6 as number of processing elements.
+
+Take also in consideration that both directories you specify in the
+configuration file should be accessible by the remote Python MPI
+interpreters. Therefore a mechanism like NFS or a distributed/network
+filesystem should be used. This is not required if you are testing pydex
+on a single machine.
 
 ## How it works?
 
@@ -75,41 +106,41 @@ correct tf-idf reverse index.
 
 Assumptions: 3 mappers, 1 reducer, 1 combiner
 
-  Document #1: foo python hello world foo
-  Document #2: python world
-  Document #3: hello world bar bar
+    Document #1: foo python hello world foo
+    Document #2: python world
+    Document #3: hello world bar bar
 
 ### First phase
 
-  Mapper #1: (<foo, #1>, 1), (<python, #1>, 1), (<hello, #1>, 1), (<world, #1>, 1), (<foo, #1>, 1)
-  Mapper #2: (<python, #2>, 1), (<world, #2>, 1)
-  Mapper #3: (<hello, #3>, 1), (<world, #3>, 1), (<bar, #3>, 1), (<bar, #3>, 1)
+    Mapper #1: (<foo, #1>, 1), (<python, #1>, 1), (<hello, #1>, 1), (<world, #1>, 1), (<foo, #1>, 1)
+    Mapper #2: (<python, #2>, 1), (<world, #2>, 1)
+    Mapper #3: (<hello, #3>, 1), (<world, #3>, 1), (<bar, #3>, 1), (<bar, #3>, 1)
 
 Assuming 2 by 2 round robin:
 
-  Reducer: (<foo, #1>, 1), (<python, #1>, 1),
-           (<python, #2>, 1), (<world, #2>, 1),
-           (<hello, #3>, 1), (<world, #3>, 1),
-           (<hello, #1>, 1), (<world, #1>, 1),
-           (<bar, #3>, 2), (<foo, #1>, 1)
+    Reducer: (<foo, #1>, 1), (<python, #1>, 1),
+             (<python, #2>, 1), (<world, #2>, 1),
+             (<hello, #3>, 1), (<world, #3>, 1),
+             (<hello, #1>, 1), (<world, #1>, 1),
+             (<bar, #3>, 2), (<foo, #1>, 1)
 
 After sorting (by the way this is done in place) and assuming the heap
 is of static size of 5 tuples max we have:
 
-  Chunk #1: (<foo, #1>, 1), (<hello, #3>, 1), (<python, #1>, 1), (<python, #2>, 1), (<world, #2>, 1)
-  Chunk #2: (<bar, #3>, 2), (<foo, #1>, 1), (<hello, #1>, 1), (<world, #1>, 1), (<world, #3>, 1)
+    Chunk #1: (<foo, #1>, 1), (<hello, #3>, 1), (<python, #1>, 1), (<python, #2>, 1), (<world, #2>, 1)
+    Chunk #2: (<bar, #3>, 2), (<foo, #1>, 1), (<hello, #1>, 1), (<world, #1>, 1), (<world, #3>, 1)
 
-  Combiner: (<bar, #3>, 2),
-            (<foo, #1>, 2),
-            (<hello, #1>, 1),
+    Combiner: (<bar, #3>, 2),
+              (<foo, #1>, 2),
+              (<hello, #1>, 1),
 
-            (<hello, #3>, 1),
-            (<python, #1>, 1),
-            (<python, #2>, 1),
+              (<hello, #3>, 1),
+              (<python, #1>, 1),
+              (<python, #2>, 1),
 
-            (<world, #1>, 1),
-            (<world, #2>, 1),
-            (<world, #3>, 1)
+              (<world, #1>, 1),
+              (<world, #2>, 1),
+              (<world, #3>, 1)
 
 ### Second phase
 
@@ -124,18 +155,18 @@ The reducer on the other hand:
 
 In the specific example we have:
 
-  Mapper #1: (<#3>, bar, 2),   (<#1>, foo, 2),    (<#1>, hello, 1)
-  Mapper #2: (<#3>, hello, 1), (<#1>, python, 1), (<#2>, python, 1)
-  Mapper #3: (<#1>, world, 1), (<#2>, world, 1),  (<#3>, world, 1)
+    Mapper #1: (<#3>, bar, 2),   (<#1>, foo, 2),    (<#1>, hello, 1)
+    Mapper #2: (<#3>, hello, 1), (<#1>, python, 1), (<#2>, python, 1)
+    Mapper #3: (<#1>, world, 1), (<#2>, world, 1),  (<#3>, world, 1)
 
-  Reducer: (<#3>, bar, 2, 0), (<#1>, foo, 2, 0), (<#3>, hello, 1, 0), (<#1>, python, 1, 0), (<#1>, world, 1, 0),
-           (<#2>, world, 1, 0), (<#1>, hello, 1, 0), (<#2>, python, 1, 0), (<#3>, world, 1, 0)
+    Reducer: (<#3>, bar, 2, 0), (<#1>, foo, 2, 0), (<#3>, hello, 1, 0), (<#1>, python, 1, 0), (<#1>, world, 1, 0),
+             (<#2>, world, 1, 0), (<#1>, hello, 1, 0), (<#2>, python, 1, 0), (<#3>, world, 1, 0)
 
 After sorting (by the way this is done in place) and assuming the heap
 is of static size of 5 tuples max we have:
 
-  Chunk #1: (<#1>, foo, 2, 4), (<#1>, python, 1, 4), (<#1>, world, 1, 4), (<#3>, hello, 1, 3), (<#3>, bar, 2, 3)
-  Chunk #2: (<#1>, hello, 1, 1), (<#2>, python, 1, 2), (<#2>, world, 1, 2), (<#3>, world, 1, 1)
+    Chunk #1: (<#1>, foo, 2, 4), (<#1>, python, 1, 4), (<#1>, world, 1, 4), (<#3>, hello, 1, 3), (<#3>, bar, 2, 3)
+    Chunk #2: (<#1>, hello, 1, 1), (<#2>, python, 1, 2), (<#2>, world, 1, 2), (<#3>, world, 1, 1)
 
 The combiner at this point will keep up a counter and stop writing to
 disk until the document id of the iterator is different from the
@@ -143,17 +174,17 @@ previous one. The output at this point will be:
 
 They might be not in order
 
-  (<#1>, hello, 1, 5),
-  (<#1>, foo, 2, 5),
-  (<#1>, python, 1, 5),
+    (<#1>, hello, 1, 5),
+    (<#1>, foo, 2, 5),
+    (<#1>, python, 1, 5),
 
-  (<#1>, world, 1, 5),
-  (<#2>, python, 1, 2),
-  (<#2>, world, 1, 2),
+    (<#1>, world, 1, 5),
+    (<#2>, python, 1, 2),
+    (<#2>, world, 1, 2),
 
-  (<#3>, hello, 1, 4),
-  (<#3>, bar, 2, 4),
-  (<#3>, world, 1, 4)
+    (<#3>, hello, 1, 4),
+    (<#3>, bar, 2, 4),
+    (<#3>, world, 1, 4)
 
 ### Third phase
 
@@ -169,31 +200,33 @@ While the reducer:
 
     {[word, docId] => tfidf}
 
-  Mapper #1: (<hello>, #1, 1, 5), (<foo>,    #1, 2, 5), (<python>, #1, 1, 5)
-  Mapper #2: (<world>, #1, 1, 5), (<python>, #2, 1, 2), (<world>,  #2, 1, 2)
-  Mapper #3: (<hello>, #3, 1, 4), (<bar>,    #3, 2, 4), (<world>,  #3, 1, 4)
+So in our case:
 
-  Reducer: (<hello>, #1, 1, 5, 0), (<foo>, #1, 2, 5, 0), (<world>, #1, 1, 5, 0), (<python>, #2, 1, 2, 0), (<hello>, #3, 1, 4, 0)
-           (<bar>, #3, 2, 4, 0), (<python>, #1, 1, 5, 0), (<world>, #2, 1, 2, 0), (<world>, #3, 1, 4, 0)
+    Mapper #1: (<hello>, #1, 1, 5), (<foo>,    #1, 2, 5), (<python>, #1, 1, 5)
+    Mapper #2: (<world>, #1, 1, 5), (<python>, #2, 1, 2), (<world>,  #2, 1, 2)
+    Mapper #3: (<hello>, #3, 1, 4), (<bar>,    #3, 2, 4), (<world>,  #3, 1, 4)
+
+    Reducer: (<hello>, #1, 1, 5, 0), (<foo>, #1, 2, 5, 0), (<world>, #1, 1, 5, 0), (<python>, #2, 1, 2, 0), (<hello>, #3, 1, 4, 0)
+             (<bar>, #3, 2, 4, 0), (<python>, #1, 1, 5, 0), (<world>, #2, 1, 2, 0), (<world>, #3, 1, 4, 0)
 
 Reducer after sorting:
 
-  Reducer: (<foo, #1>, 2, 5, 1), (<hello, #1>, 1, 5, 2), (<hello, #3>, 1, 4, 2), (<python, #2>, 1, 2, 1), (<world, #1>, 1, 5, 1)
-           (<bar, #3>, 2, 4, 1), (<python, #1>, 1, 5, 1), (<world, #2>, 1, 2, 2), (<world, #3>, 1, 4, 2)
+    Reducer: (<foo, #1>, 2, 5, 1), (<hello, #1>, 1, 5, 2), (<hello, #3>, 1, 4, 2), (<python, #2>, 1, 2, 1), (<world, #1>, 1, 5, 1)
+             (<bar, #3>, 2, 4, 1), (<python, #1>, 1, 5, 1), (<world, #2>, 1, 2, 2), (<world, #3>, 1, 4, 2)
 
-  Combiner:
+    Combiner:
 
-  (<bar, #3>, 2, 4, 1),
-  (<foo, #1>, 2, 5, 1),
-  (<hello, #1>, 1, 5, 2),
+    (<bar, #3>, 2, 4, 1),
+    (<foo, #1>, 2, 5, 1),
+    (<hello, #1>, 1, 5, 2),
 
-  (<hello, #3>, 1, 4, 2),
-  (<python, #1>, 1, 5, 2), // after computing
-  (<python, #2>, 1, 2, 2),
+    (<hello, #3>, 1, 4, 2),
+    (<python, #1>, 1, 5, 2), // after computing
+    (<python, #2>, 1, 2, 2),
 
-  (<world, #1>, 1, 5, 3), // after computing
-  (<world, #2>, 1, 2, 3),
-  (<world, #3>, 1, 4, 3)
+    (<world, #1>, 1, 5, 3), // after computing
+    (<world, #2>, 1, 2, 3),
+    (<world, #3>, 1, 4, 3)
 
 Please note that the only feasible approach here is to have a multiway
 merge sort that outputs (<word, docid>, wordCount, wordPerDoc) in sorted
@@ -202,27 +235,27 @@ on a secondary file buffer.
 
 ### Final phase
 
-  Mapper #1: <bar, #3>    => (2 / 4) * log(3 / 1) = 0.79
-             <foo, #1>    => (2 / 5) * log(3 / 1) = 0.63
-             <hello, #1>  => (1 / 5) * log(3 / 2) = 0.12
+    Mapper #1: <bar, #3>    => (2 / 4) * log(3 / 1) = 0.79
+               <foo, #1>    => (2 / 5) * log(3 / 1) = 0.63
+               <hello, #1>  => (1 / 5) * log(3 / 2) = 0.12
 
-  Mapper #2: <hello, #3>  => (1 / 4) * log(3 / 2) = 0.15
-             <python, #1> => (1 / 5) * log(3 / 2) = 0.12
-             <python, #2> => (1 / 2) * log(3 / 2) = 0.29
+    Mapper #2: <hello, #3>  => (1 / 4) * log(3 / 2) = 0.15
+               <python, #1> => (1 / 5) * log(3 / 2) = 0.12
+               <python, #2> => (1 / 2) * log(3 / 2) = 0.29
 
-  Mapper #3: <world, #1>  => (1 / 5) * log(3 / 3) = 0
-             <world, #2>  => (1 / 2) * log(3 / 3) = 0
-             <world, #3>  => (1 / 4) * log(3 / 3) = 0
+    Mapper #3: <world, #1>  => (1 / 5) * log(3 / 3) = 0
+               <world, #2>  => (1 / 2) * log(3 / 3) = 0
+               <world, #3>  => (1 / 4) * log(3 / 3) = 0
 
-  Final matrix
+    Final matrix
 
-  ------------+------+------+------+------+
-              | foo  | bar  | hello|python|
-  ------------+------+------+------+------+
-  Document #1 | 0.63 | -    | 0.12 | 0.12 |
-  Document #2 | -    | -    | -    | 0.29 |
-  Document #3 | -    | 0.39 | 0.15 | -    |
-  ------------+------+------+------+------+
+    ------------+------+------+------+------+
+                | foo  | bar  | hello|python|
+    ------------+------+------+------+------+
+    Document #1 | 0.63 | -    | 0.12 | 0.12 |
+    Document #2 | -    | -    | -    | 0.29 |
+    Document #3 | -    | 0.39 | 0.15 | -    |
+    ------------+------+------+------+------+
 
 Implementation
 ==============
