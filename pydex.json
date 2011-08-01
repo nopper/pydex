@@ -1,0 +1,19 @@
+{
+    "main": {
+        "input": "/mnt/root/collection/test/",
+        "output": "/mnt/root/collection/testout/",
+        "mapper": 2,
+        "reducer": 2,
+        "compression": false
+    },
+    "mapper": {
+        "phase-one": {
+            "message-buffer": 500
+        }
+    },
+    "reducer": {
+        "phase-one": {
+            "threshold": 66060288
+        }
+    }
+}
