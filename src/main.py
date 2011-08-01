@@ -10,6 +10,7 @@ from mpi4py import MPI
 from mapper import Mapper
 from reducer import Reducer
 from combiner import Combiner
+from config import conf
 
 log = get_logger("master")
 
@@ -120,19 +121,24 @@ class Master(object):
         self.second_phase()
 
     def first_phase(self):
-        docid = 1
+        docid = 0
         self.files = []
 
-        for path in sorted(os.listdir(self.input_path)):
-            path = os.path.join(self.input_path, path)
+        for fname in sorted(os.listdir(self.input_path)):
+            path = os.path.join(self.input_path, fname)
 
             if os.stat(path).st_size == 0:
                 continue
 
-            self.files.append((path, docid))
-            docid += 1
+            try:
+                # Extract the number of documents from the filename.
+                # The filename is in the form coll-<#part>-<#docs>.tgz
+                docid += int(fname.split("-", 2)[2][:6])
+                self.files.append(path)
+            except:
+                continue
 
-        self.num_docs = docid - 1
+        self.num_docs = docid
 
         # This is a merely farm. Each worker connects to this server and we
         # assign it a file to scan
@@ -218,11 +224,5 @@ def initialize_indexer(input_path, output_path, num_mappers, num_reducers):
             Mapper([i + SNODES for i in range(num_reducers)])
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
-        if rank == 0:
-            print "Usage: %s <input-path> <output-path> <num-mappers> <num-reducers>" % \
-                  (sys.argv[0])
-        sys.exit(0)
-    else:
-        initialize_indexer(sys.argv[1], sys.argv[2],
-                           int(sys.argv[3]), int(sys.argv[4]))
+    initialize_indexer(conf.get("main.input"), conf.get("main.output"),
+                       conf.get("main.mapper"), conf.get("main.reducer"))

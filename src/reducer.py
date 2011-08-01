@@ -2,12 +2,13 @@
 
 from mpi4py import MPI
 from bisect import insort, bisect
-from heapq import heappush, heappop
-from tempfile import NamedTemporaryFile
 from collections import defaultdict
-
+from heapq import heappush, heappop
 from struct import calcsize, pack
+from tempfile import NamedTemporaryFile
+
 from tags import *
+from config import conf
 from logger import get_logger
 
 rank = MPI.COMM_WORLD.Get_rank()
@@ -109,7 +110,7 @@ class Reducer(object):
 
                 if words_length > threshold or remaining == 0:
                     self.write_words_per_doc(heap, words_dct)
-                    words_dct = {}
+                    words_dct = defaultdict(int)
                     words_length = 0
 
         self.write_words_per_doc(heap, words_dct)
@@ -216,7 +217,7 @@ class Reducer(object):
     def reduce_word_count(self):
         heap = []
         length = 0
-        threshold = 1024 * 1024 # 1 MByte
+        threshold = conf.get("reducer.phase-one.threshold")
         remaining = self.num_workers
 
         while remaining > 0:
@@ -227,10 +228,9 @@ class Reducer(object):
                 log.debug("Received termination message from %d" % \
                         status.Get_source())
             else:
-                word, doc_id = msg
-
-                length += len(str(doc_id)) + len(word) + 1
-                heappush(heap, msg)
+                for word, doc_id in msg:
+                    length += len(str(doc_id)) + len(word) + 1
+                    heappush(heap, (word, doc_id))
 
             if length > threshold or remaining == 0:
                 self.write_partition(heap)

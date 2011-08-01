@@ -4,12 +4,14 @@ import os
 import sys
 import mmap
 import math
+import time
 import contextlib
 
 from tags import *
 from time import sleep
 from mpi4py import MPI
 from logger import get_logger
+from config import conf
 from extractor import DocumentExtractor
 
 comm = MPI.COMM_WORLD
@@ -32,10 +34,10 @@ class Mapper(object):
 
         log.info("[2] Starting (rank=%d)" % rank)
         self.execute_on_request(self.word_count_per_doc)
-        log.info("[2] Finished (rank=%d)" % rank)
         comm.Barrier()
 
         log.info("[3] Starting (rank=%d)" % rank)
+        log.info("[2] Finished (rank=%d)" % rank)
         self.execute_on_request(self.word_scrambler)
         log.info("[3] Finished (rank=%d)" % rank)
         comm.Barrier()
@@ -162,13 +164,58 @@ class Mapper(object):
         log.info("Removing file %s" % path)
         os.unlink(path)
 
-    def word_count(self, (path, doc_id)):
+    def word_count(self, path):
         reducers = self.reducers
+        threshold = conf.get("mapper.phase-one.message-buffer")
 
-        # TODO: Here we can optimize the communication by buffering a little
-        #       bit instead of sending a message for each word.
+        prev_perc = 0
+        prev_docid = -1
+        prev_time = time.time()
 
-        for word in DocumentExtractor(path, doc_id).get_words():
-            dst_reducer = hash(word) % len(reducers)
-            comm.send((word, doc_id), dest=reducers[dst_reducer])
-            self.tasks += 1
+        num_msg = 0
+        buffers = []
+
+        def humanize_time(secs):
+            mins, secs = divmod(secs, 60)
+            hours, mins = divmod(mins, 60)
+            return '%02d:%02d:%02d' % (hours, mins, secs)
+
+        for reducer in xrange(len(reducers)):
+            buffers.append([])
+
+        for perc, doc_id, word in DocumentExtractor(path).get_words():
+            # Distribute on word basis
+            buffers[hash(word) % len(reducers)].append((word, doc_id))
+
+            num_msg += 1
+
+            if prev_docid != doc_id:
+                self.tasks += 1
+                prev_docid = doc_id
+
+            if perc - prev_perc >= 0.05:
+                now = time.time()
+                diff = now - prev_time
+                eta = (diff / (perc - prev_perc)) * (1.0 - perc)
+
+                log.info(
+                    "Mapper at {:02d}% - {:d} documents - ETA: {:s}".format(
+                        int(perc * 100), self.tasks, humanize_time(eta)
+                    )
+                )
+
+                prev_time = time.time()
+                prev_perc = perc
+
+            if num_msg >= threshold:
+                num_msg = 0
+
+                for id, buffer in enumerate(buffers):
+                    if buffer:
+                        comm.send(buffer, dest=reducers[id])
+                        buffers[id] = []
+
+        for id, buffer in enumerate(buffers):
+            if buffer:
+                comm.send(buffer, dest=reducers[id])
+                buffers[id] = []
