@@ -71,50 +71,47 @@ Now we briefly describe the work assigned to each subcomponent:
 Now we further explain the goal of each phase in order to derive the
 correct tf-idf reverse index.
 
-Inputs
-======
+### Inputs
 
 Assumptions: 3 mappers, 1 reducer, 1 combiner
 
-Document #1: foo python hello world foo
-Document #2: python world
-Document #3: hello world bar bar
+  Document #1: foo python hello world foo
+  Document #2: python world
+  Document #3: hello world bar bar
 
-First phase
-===========
+### First phase
 
-Mapper #1: (<foo, #1>, 1), (<python, #1>, 1), (<hello, #1>, 1), (<world, #1>, 1), (<foo, #1>, 1)
-Mapper #2: (<python, #2>, 1), (<world, #2>, 1)
-Mapper #3: (<hello, #3>, 1), (<world, #3>, 1), (<bar, #3>, 1), (<bar, #3>, 1)
+  Mapper #1: (<foo, #1>, 1), (<python, #1>, 1), (<hello, #1>, 1), (<world, #1>, 1), (<foo, #1>, 1)
+  Mapper #2: (<python, #2>, 1), (<world, #2>, 1)
+  Mapper #3: (<hello, #3>, 1), (<world, #3>, 1), (<bar, #3>, 1), (<bar, #3>, 1)
 
 Assuming 2 by 2 round robin:
 
-Reducer: (<foo, #1>, 1), (<python, #1>, 1),
-         (<python, #2>, 1), (<world, #2>, 1),
-         (<hello, #3>, 1), (<world, #3>, 1),
-         (<hello, #1>, 1), (<world, #1>, 1),
-         (<bar, #3>, 2), (<foo, #1>, 1)
+  Reducer: (<foo, #1>, 1), (<python, #1>, 1),
+           (<python, #2>, 1), (<world, #2>, 1),
+           (<hello, #3>, 1), (<world, #3>, 1),
+           (<hello, #1>, 1), (<world, #1>, 1),
+           (<bar, #3>, 2), (<foo, #1>, 1)
 
 After sorting (by the way this is done in place) and assuming the heap
 is of static size of 5 tuples max we have:
 
-Chunk #1: (<foo, #1>, 1), (<hello, #3>, 1), (<python, #1>, 1), (<python, #2>, 1), (<world, #2>, 1)
-Chunk #2: (<bar, #3>, 2), (<foo, #1>, 1), (<hello, #1>, 1), (<world, #1>, 1), (<world, #3>, 1)
+  Chunk #1: (<foo, #1>, 1), (<hello, #3>, 1), (<python, #1>, 1), (<python, #2>, 1), (<world, #2>, 1)
+  Chunk #2: (<bar, #3>, 2), (<foo, #1>, 1), (<hello, #1>, 1), (<world, #1>, 1), (<world, #3>, 1)
 
-Combiner: (<bar, #3>, 2),
-          (<foo, #1>, 2),
-          (<hello, #1>, 1),
+  Combiner: (<bar, #3>, 2),
+            (<foo, #1>, 2),
+            (<hello, #1>, 1),
 
-          (<hello, #3>, 1),
-          (<python, #1>, 1),
-          (<python, #2>, 1),
+            (<hello, #3>, 1),
+            (<python, #1>, 1),
+            (<python, #2>, 1),
 
-          (<world, #1>, 1),
-          (<world, #2>, 1),
-          (<world, #3>, 1)
+            (<world, #1>, 1),
+            (<world, #2>, 1),
+            (<world, #3>, 1)
 
-Second phase
-============
+### Second phase
 
 In the second phase the final goal is to have the word-count per
 document. In this case each mapper executes:
@@ -123,24 +120,22 @@ document. In this case each mapper executes:
 
 The reducer on the other hand:
 
-    {docId => [[word-1, wordCount], [word-2, wordCount], ...]}
-
-    {[word, docId] => [wordCount, wordsPerDoc]}
+    {docId => [[word-1, wordCount], [word-2, wordCount], ...]} => {[word, docId] => [wordCount, wordsPerDoc]}
 
 In the specific example we have:
 
-Mapper #1: (<#3>, bar, 2),   (<#1>, foo, 2),    (<#1>, hello, 1)
-Mapper #2: (<#3>, hello, 1), (<#1>, python, 1), (<#2>, python, 1)
-Mapper #3: (<#1>, world, 1), (<#2>, world, 1),  (<#3>, world, 1)
+  Mapper #1: (<#3>, bar, 2),   (<#1>, foo, 2),    (<#1>, hello, 1)
+  Mapper #2: (<#3>, hello, 1), (<#1>, python, 1), (<#2>, python, 1)
+  Mapper #3: (<#1>, world, 1), (<#2>, world, 1),  (<#3>, world, 1)
 
-Reducer: (<#3>, bar, 2, 0), (<#1>, foo, 2, 0), (<#3>, hello, 1, 0), (<#1>, python, 1, 0), (<#1>, world, 1, 0),
-         (<#2>, world, 1, 0), (<#1>, hello, 1, 0), (<#2>, python, 1, 0), (<#3>, world, 1, 0)
+  Reducer: (<#3>, bar, 2, 0), (<#1>, foo, 2, 0), (<#3>, hello, 1, 0), (<#1>, python, 1, 0), (<#1>, world, 1, 0),
+           (<#2>, world, 1, 0), (<#1>, hello, 1, 0), (<#2>, python, 1, 0), (<#3>, world, 1, 0)
 
 After sorting (by the way this is done in place) and assuming the heap
 is of static size of 5 tuples max we have:
 
-Chunk #1: (<#1>, foo, 2, 4), (<#1>, python, 1, 4), (<#1>, world, 1, 4), (<#3>, hello, 1, 3), (<#3>, bar, 2, 3)
-Chunk #2: (<#1>, hello, 1, 1), (<#2>, python, 1, 2), (<#2>, world, 1, 2), (<#3>, world, 1, 1)
+  Chunk #1: (<#1>, foo, 2, 4), (<#1>, python, 1, 4), (<#1>, world, 1, 4), (<#3>, hello, 1, 3), (<#3>, bar, 2, 3)
+  Chunk #2: (<#1>, hello, 1, 1), (<#2>, python, 1, 2), (<#2>, world, 1, 2), (<#3>, world, 1, 1)
 
 The combiner at this point will keep up a counter and stop writing to
 disk until the document id of the iterator is different from the
@@ -148,91 +143,86 @@ previous one. The output at this point will be:
 
 They might be not in order
 
-(<#1>, hello, 1, 5),
-(<#1>, foo, 2, 5),
-(<#1>, python, 1, 5),
+  (<#1>, hello, 1, 5),
+  (<#1>, foo, 2, 5),
+  (<#1>, python, 1, 5),
 
-(<#1>, world, 1, 5),
-(<#2>, python, 1, 2),
-(<#2>, world, 1, 2),
+  (<#1>, world, 1, 5),
+  (<#2>, python, 1, 2),
+  (<#2>, world, 1, 2),
 
-(<#3>, hello, 1, 4),
-(<#3>, bar, 2, 4),
-(<#3>, world, 1, 4)
+  (<#3>, hello, 1, 4),
+  (<#3>, bar, 2, 4),
+  (<#3>, world, 1, 4)
 
-
-Third phase
-===========
+### Third phase
 
 The mapper in this phase shall produce something like:
 
-    {[word, docId] => [wordCount, wordsPerDoc]}
-
-    {word => [docId, wordCount, wordsPerDoc]}
+    {[word, docId] => [wordCount, wordsPerDoc]} => {word => [docId, wordCount, wordsPerDoc]}
 
 While the reducer:
 
-    {word => [[docId-1, wordCount-1, wordsPerDoc-1], [docId-2, wordCount-2, wordsPerDoc-2], ...]}
+    {word => [[docId-1, wordCount-1, wordsPerDoc-1], [docId-2, wordCount-2, wordsPerDoc-2], ...]} =>
 
-    {[word, docId] => [wordCount, wordsPerDoc, docsPerWord]}
+    {[word, docId] => [wordCount, wordsPerDoc, docsPerWord]} =>
 
     {[word, docId] => tfidf}
 
-Mapper #1: (<hello>, #1, 1, 5), (<foo>,    #1, 2, 5), (<python>, #1, 1, 5)
-Mapper #2: (<world>, #1, 1, 5), (<python>, #2, 1, 2), (<world>,  #2, 1, 2)
-Mapper #3: (<hello>, #3, 1, 4), (<bar>,    #3, 2, 4), (<world>,  #3, 1, 4)
+  Mapper #1: (<hello>, #1, 1, 5), (<foo>,    #1, 2, 5), (<python>, #1, 1, 5)
+  Mapper #2: (<world>, #1, 1, 5), (<python>, #2, 1, 2), (<world>,  #2, 1, 2)
+  Mapper #3: (<hello>, #3, 1, 4), (<bar>,    #3, 2, 4), (<world>,  #3, 1, 4)
 
-Reducer: (<hello>, #1, 1, 5, 0), (<foo>, #1, 2, 5, 0), (<world>, #1, 1, 5, 0), (<python>, #2, 1, 2, 0), (<hello>, #3, 1, 4, 0)
-         (<bar>, #3, 2, 4, 0), (<python>, #1, 1, 5, 0), (<world>, #2, 1, 2, 0), (<world>, #3, 1, 4, 0)
+  Reducer: (<hello>, #1, 1, 5, 0), (<foo>, #1, 2, 5, 0), (<world>, #1, 1, 5, 0), (<python>, #2, 1, 2, 0), (<hello>, #3, 1, 4, 0)
+           (<bar>, #3, 2, 4, 0), (<python>, #1, 1, 5, 0), (<world>, #2, 1, 2, 0), (<world>, #3, 1, 4, 0)
 
 Reducer after sorting:
 
-Reducer: (<foo, #1>, 2, 5, 1), (<hello, #1>, 1, 5, 2), (<hello, #3>, 1, 4, 2), (<python, #2>, 1, 2, 1), (<world, #1>, 1, 5, 1)
-         (<bar, #3>, 2, 4, 1), (<python, #1>, 1, 5, 1), (<world, #2>, 1, 2, 2), (<world, #3>, 1, 4, 2)
+  Reducer: (<foo, #1>, 2, 5, 1), (<hello, #1>, 1, 5, 2), (<hello, #3>, 1, 4, 2), (<python, #2>, 1, 2, 1), (<world, #1>, 1, 5, 1)
+           (<bar, #3>, 2, 4, 1), (<python, #1>, 1, 5, 1), (<world, #2>, 1, 2, 2), (<world, #3>, 1, 4, 2)
 
-Combiner:
+  Combiner:
 
-(<bar, #3>, 2, 4, 1),
-(<foo, #1>, 2, 5, 1),
-(<hello, #1>, 1, 5, 2),
+  (<bar, #3>, 2, 4, 1),
+  (<foo, #1>, 2, 5, 1),
+  (<hello, #1>, 1, 5, 2),
 
-(<hello, #3>, 1, 4, 2),
-(<python, #1>, 1, 5, 2), // after computing
-(<python, #2>, 1, 2, 2),
+  (<hello, #3>, 1, 4, 2),
+  (<python, #1>, 1, 5, 2), // after computing
+  (<python, #2>, 1, 2, 2),
 
-(<world, #1>, 1, 5, 3), // after computing
-(<world, #2>, 1, 2, 3),
-(<world, #3>, 1, 4, 3)
+  (<world, #1>, 1, 5, 3), // after computing
+  (<world, #2>, 1, 2, 3),
+  (<world, #3>, 1, 4, 3)
 
 Please note that the only feasible approach here is to have a multiway
 merge sort that outputs (<word, docid>, wordCount, wordPerDoc) in sorted
 ascending order and a counter keeping track of the docsPerWord flushed
 on a secondary file buffer.
 
-Final phase
-===========
+### Final phase
 
-Mapper #1: <bar, #3>    => (2 / 4) * log(3 / 1) = 0.79
-           <foo, #1>    => (2 / 5) * log(3 / 1) = 0.63
-           <hello, #1>  => (1 / 5) * log(3 / 2) = 0.12
+  Mapper #1: <bar, #3>    => (2 / 4) * log(3 / 1) = 0.79
+             <foo, #1>    => (2 / 5) * log(3 / 1) = 0.63
+             <hello, #1>  => (1 / 5) * log(3 / 2) = 0.12
 
-Mapper #2: <hello, #3>  => (1 / 4) * log(3 / 2) = 0.15
-           <python, #1> => (1 / 5) * log(3 / 2) = 0.12
-           <python, #2> => (1 / 2) * log(3 / 2) = 0.29
+  Mapper #2: <hello, #3>  => (1 / 4) * log(3 / 2) = 0.15
+             <python, #1> => (1 / 5) * log(3 / 2) = 0.12
+             <python, #2> => (1 / 2) * log(3 / 2) = 0.29
 
-Mapper #3: <world, #1>  => (1 / 5) * log(3 / 3) = 0
-           <world, #2>  => (1 / 2) * log(3 / 3) = 0
-           <world, #3>  => (1 / 4) * log(3 / 3) = 0
+  Mapper #3: <world, #1>  => (1 / 5) * log(3 / 3) = 0
+             <world, #2>  => (1 / 2) * log(3 / 3) = 0
+             <world, #3>  => (1 / 4) * log(3 / 3) = 0
 
-Final matrix
+  Final matrix
 
-------------+------+------+------+------+
-            | foo  | bar  | hello|python|
-------------+------+------+------+------+
-Document #1 | 0.63 | -    | 0.12 | 0.12 |
-Document #2 | -    | -    | -    | 0.29 |
-Document #3 | -    | 0.39 | 0.15 | -    |
-------------+------+------+------+------+
+  ------------+------+------+------+------+
+              | foo  | bar  | hello|python|
+  ------------+------+------+------+------+
+  Document #1 | 0.63 | -    | 0.12 | 0.12 |
+  Document #2 | -    | -    | -    | 0.29 |
+  Document #3 | -    | 0.39 | 0.15 | -    |
+  ------------+------+------+------+------+
 
 Implementation
 ==============
