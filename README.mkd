@@ -1,3 +1,9 @@
+# NOTE
+
+PLEASE READ IT HERE
+
+* All the code present here is actually have been moved and integrated inside [PomeGranate](http://github.com/nopper/PomeGranate)
+
 # Pydex - A simple case study of inverted index creation
 
 ## What is an Inverted Index?
